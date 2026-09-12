@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "CPU backend for TurboQuant using rayon parallelism"
 
+[lints]
+workspace = true
+
 [dependencies]
 turboquant-core = { path = "../turboquant-core" }
 rayon.workspace = true
