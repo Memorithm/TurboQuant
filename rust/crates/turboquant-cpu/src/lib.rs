@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 // Clippy allows for practical numerical code
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
