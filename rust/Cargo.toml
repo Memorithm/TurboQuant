@@ -59,8 +59,8 @@ hashbrown = "=0.14.5"
 [workspace.lints.clippy]
 pedantic = { level = "allow", priority = -1 }
 nursery = { level = "allow", priority = -1 }
-unwrap_used = "allow"
-expect_used = "allow"
+unwrap_used = "warn"
+expect_used = "warn"
 # Allow pedantic lints that are style preferences
 uninlined_format_args = "allow"
 cast_precision_loss = "allow"
