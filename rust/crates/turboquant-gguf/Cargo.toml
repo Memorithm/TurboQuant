@@ -7,9 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "GGUF I/O for TurboQuant: parsing, writing, cache-type turbo3 support"
 
-[lints]
-workspace = true
-
 [dependencies]
 turboquant-core = { path = "../turboquant-core" }
 byteorder.workspace = true
