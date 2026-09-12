@@ -7,9 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Core TurboQuant algorithms: PolarRotation, QJL quantizer, bit-packing, KV block storage"
 
-[lints]
-workspace = true
-
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
