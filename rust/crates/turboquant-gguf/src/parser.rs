@@ -161,7 +161,10 @@ impl GgufParser {
     /// Returns an error on malformed or truncated input.
     pub fn parse(data: Vec<u8>) -> Result<GgufFile, TurboQuantError> {
         let header = parse_header(&data)?;
-        let mut r = Reader { buf: &data, pos: 24 };
+        let mut r = Reader {
+            buf: &data,
+            pos: 24,
+        };
 
         let mut metadata =
             Vec::with_capacity(usize::try_from(header.metadata_kv_count).unwrap_or(0));
