@@ -95,7 +95,6 @@ impl GgufFile {
         let size = if let Some(s) = info.data_size() {
             usize::try_from(s).map_err(|_| err("tensor size overflow"))?
         } else {
-            // Span until the next tensor's offset, or end of file.
             let next = self
                 .tensors
                 .iter()
@@ -162,10 +161,7 @@ impl GgufParser {
     /// Returns an error on malformed or truncated input.
     pub fn parse(data: Vec<u8>) -> Result<GgufFile, TurboQuantError> {
         let header = parse_header(&data)?;
-        let mut r = Reader {
-            buf: &data,
-            pos: 24,
-        };
+        let mut r = Reader { buf: &data, pos: 24 };
 
         let mut metadata =
             Vec::with_capacity(usize::try_from(header.metadata_kv_count).unwrap_or(0));
@@ -187,7 +183,7 @@ impl GgufParser {
             for _ in 0..n_dims {
                 dims.push(r.u64()?);
             }
-            let ggml_type = GgmlType::from_u32(r.u32()?)?;
+            let ggml_type = GgmlType::from_u32(r.u32()?);
             let offset = r.u64()?;
             tensors.push(GgufTensorInfo {
                 name,
@@ -226,7 +222,6 @@ impl GgufParser {
             data,
         };
 
-        // Validate that every tensor's data lies within the file.
         for info in &file.tensors {
             file.tensor_data(info)?;
         }
@@ -244,7 +239,6 @@ impl GgufParser {
     }
 }
 
-/// Little-endian cursor over a byte slice.
 struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
@@ -321,7 +315,6 @@ impl Reader<'_> {
                 let elem_ty = GgufValueType::from_u32(self.u32()?)?;
                 let count = self.u64()?;
                 let count = usize::try_from(count).map_err(|_| err("array count overflow"))?;
-                // Every element occupies at least one byte on the wire.
                 if count > self.buf.len() - self.pos {
                     return Err(err(format!("array count {count} exceeds remaining file")));
                 }
