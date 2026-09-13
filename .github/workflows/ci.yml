@@ -32,6 +32,11 @@ jobs:
       # --all-features would enable turboquant-cuda's `cuda` feature, whose cudarc
       # build script requires a CUDA toolkit — absent on GitHub runners.
       - run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings -W clippy::pedantic
+      # V1 production gate: make unwrap/expect enforcement explicit instead of
+      # relying on workspace-lint inheritance. Tests/examples/benches are excluded
+      # so assertion-oriented test code does not weaken the public runtime gate.
+      - name: Public production unwrap/expect gate
+        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::expect_used
 
   check:
     name: Check

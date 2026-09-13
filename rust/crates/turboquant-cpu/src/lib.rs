@@ -164,7 +164,7 @@ impl CpuBackend {
             head_dim,
             seq_len,
             num_heads,
-            elapsed_ms: elapsed.as_millis() as f64,
+            elapsed_ms: elapsed.as_secs_f64() * 1_000.0,
         }
     }
 }
