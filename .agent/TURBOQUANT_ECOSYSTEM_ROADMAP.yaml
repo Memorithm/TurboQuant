@@ -194,3 +194,21 @@ agent_operating_protocol:
     If this roadmap cannot be read, do not make major format, codec-semantic,
     model-conversion, quality-promotion, cross-repository integration, or merge
     decisions. Read-only diagnosis is allowed.
+
+ax_benchmark_task_program:
+  source_review_date: "2026-09-27"
+  external_reference: google_ax_architecture_only
+  role: bounded_codec_and_KV_benchmark_consumer
+  objective: >-
+    Run codec/KV qualification in exact-revision task workspaces with matched
+    memory, compute, device and wall-clock envelopes and retained environment
+    provenance.
+  phases:
+    - AXTQ1_pin_codec_code_inputs_and_benchmark_protocol_revisions
+    - AXTQ2_attach_matched_cpu_ram_gpu_and_time_budgets
+    - AXTQ3_record_device_toolchain_and_task_identity_with_results
+    - AXTQ4_integrate_ElasticXxx_only_for_declared_adaptive_experiments
+  invariants:
+    - task_success_is_not_codec_quality_or_speed_evidence
+    - benchmark_claims_remain_exact_environment_scoped
+    - matched_budget_comparisons_must_not_silently_adapt_one_arm
