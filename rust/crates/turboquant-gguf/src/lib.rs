@@ -25,6 +25,6 @@ pub mod types;
 /// Writer for GGUF format files.
 pub mod writer;
 
-pub use parser::{GgufFile, GgufParser};
+pub use parser::{GgufFile, GgufLimits, GgufParser};
 pub use types::{GgmlType, GgufHeader, GgufTensorInfo, GgufValue, GgufValueType};
 pub use writer::GgufWriter;

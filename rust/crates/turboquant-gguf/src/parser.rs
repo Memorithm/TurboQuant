@@ -3,11 +3,53 @@
 use crate::types::{
     GgmlType, GgufHeader, GgufTensorInfo, GgufValue, GgufValueType, DEFAULT_ALIGNMENT, GGUF_MAGIC,
 };
+use std::io::Read;
 use std::path::Path;
 use turboquant_core::error::TurboQuantError;
 
 /// Maximum nesting depth for metadata arrays (defensive limit).
 const MAX_ARRAY_DEPTH: u32 = 8;
+
+/// Admission limits for owned GGUF bytes and decoded metadata allocations.
+///
+/// The allocation budget counts requested vector storage and string bytes;
+/// it is not an RSS limit and excludes the caller-owned raw input buffer.
+#[derive(Debug, Clone, Copy)]
+pub struct GgufLimits {
+    /// Maximum raw input size (default: 64 GiB).
+    pub max_file_bytes: u64,
+    /// Maximum metadata key/value count (default: 1,000,000).
+    pub max_metadata_entries: usize,
+    /// Maximum tensor count (default: 100,000).
+    pub max_tensors: usize,
+    /// Maximum elements in one metadata array (default: 1,000,000).
+    pub max_array_elements: usize,
+    /// Maximum bytes in one decoded string (default: 16 MiB).
+    pub max_string_bytes: usize,
+    /// Cumulative requested decoded allocation bytes (default: 256 MiB).
+    pub max_decoded_bytes: usize,
+}
+
+impl Default for GgufLimits {
+    fn default() -> Self {
+        Self {
+            max_file_bytes: 64 * 1024 * 1024 * 1024,
+            max_metadata_entries: 1_000_000,
+            max_tensors: 100_000,
+            max_array_elements: 1_000_000,
+            max_string_bytes: 16 * 1024 * 1024,
+            max_decoded_bytes: 256 * 1024 * 1024,
+        }
+    }
+}
+
+fn bounded_count(count: u64, limit: usize, label: &str) -> Result<usize, TurboQuantError> {
+    let count = usize::try_from(count).map_err(|_| err(format!("{label} count overflow")))?;
+    if count > limit {
+        return Err(err(format!("{label} count {count} exceeds limit {limit}")));
+    }
+    Ok(count)
+}
 
 fn err(msg: impl Into<String>) -> TurboQuantError {
     TurboQuantError::InvalidGguf(msg.into())
@@ -92,7 +134,15 @@ impl GgufFile {
             .data_start
             .checked_add(usize::try_from(info.offset).map_err(|_| err("tensor offset overflow"))?)
             .ok_or_else(|| err("tensor offset overflow"))?;
-        let size = if let Some(s) = info.data_size() {
+        let size = if let Some(element_size) = info.ggml_type.element_size() {
+            let elements = info
+                .dims
+                .iter()
+                .try_fold(1u64, |n, &dim| n.checked_mul(dim))
+                .ok_or_else(|| err("tensor element count overflow"))?;
+            let s = elements
+                .checked_mul(element_size as u64)
+                .ok_or_else(|| err("tensor size overflow"))?;
             usize::try_from(s).map_err(|_| err("tensor size overflow"))?
         } else {
             let next = self
@@ -160,29 +210,57 @@ impl GgufParser {
     ///
     /// Returns an error on malformed or truncated input.
     pub fn parse(data: Vec<u8>) -> Result<GgufFile, TurboQuantError> {
+        Self::parse_with_limits(data, GgufLimits::default())
+    }
+
+    /// Parse owned bytes under explicit admission limits before any decoded reserve.
+    /// Returns `InvalidGguf` for exhausted budgets, impossible counts or allocations.
+    pub fn parse_with_limits(
+        data: Vec<u8>,
+        limits: GgufLimits,
+    ) -> Result<GgufFile, TurboQuantError> {
+        if data.len() as u64 > limits.max_file_bytes {
+            return Err(err("GGUF input exceeds file byte limit"));
+        }
         let header = parse_header(&data)?;
+        let metadata_count = bounded_count(
+            header.metadata_kv_count,
+            limits.max_metadata_entries,
+            "metadata",
+        )?;
+        let tensor_count = bounded_count(header.tensor_count, limits.max_tensors, "tensor")?;
+        // Even an empty key/name needs its u64 length. The smallest metadata
+        // value needs a type tag and one byte; a scalar tensor needs 24 bytes.
+        let minimum_body = metadata_count
+            .checked_mul(13)
+            .and_then(|n| tensor_count.checked_mul(24).and_then(|t| n.checked_add(t)))
+            .ok_or_else(|| err("GGUF entry byte count overflow"))?;
+        if minimum_body > data.len() - 24 {
+            return Err(err("GGUF entry counts exceed remaining input"));
+        }
         let mut r = Reader {
             buf: &data,
             pos: 24,
+            limits,
+            remaining_allocation: limits.max_decoded_bytes,
         };
 
-        let mut metadata =
-            Vec::with_capacity(usize::try_from(header.metadata_kv_count).unwrap_or(0));
-        for _ in 0..header.metadata_kv_count {
+        let mut metadata = r.reserve_vec(metadata_count)?;
+        for _ in 0..metadata_count {
             let key = r.string()?;
             let ty = GgufValueType::from_u32(r.u32()?)?;
             let value = r.value(ty, 0)?;
             metadata.push((key, value));
         }
 
-        let mut tensors = Vec::with_capacity(usize::try_from(header.tensor_count).unwrap_or(0));
-        for _ in 0..header.tensor_count {
+        let mut tensors = r.reserve_vec(tensor_count)?;
+        for _ in 0..tensor_count {
             let name = r.string()?;
             let n_dims = r.u32()?;
             if n_dims > 8 {
                 return Err(err(format!("tensor '{name}' has {n_dims} dims (max 8)")));
             }
-            let mut dims = Vec::with_capacity(n_dims as usize);
+            let mut dims = r.reserve_vec(n_dims as usize)?;
             for _ in 0..n_dims {
                 dims.push(r.u64()?);
             }
@@ -210,8 +288,12 @@ impl GgufParser {
             None => DEFAULT_ALIGNMENT,
         };
 
-        let data_start = usize::try_from((r.pos as u64).next_multiple_of(alignment))
-            .map_err(|_| err("data section offset overflow"))?;
+        let alignment_usize = usize::try_from(alignment).map_err(|_| err("alignment overflow"))?;
+        let data_start = r
+            .pos
+            .checked_add(alignment_usize - 1)
+            .map(|n| n & !(alignment_usize - 1))
+            .ok_or_else(|| err("data section offset overflow"))?;
         if data_start > data.len() {
             return Err(err("file truncated before tensor-data section"));
         }
@@ -237,17 +319,70 @@ impl GgufParser {
     ///
     /// Returns an error on I/O failure or malformed input.
     pub fn parse_file(path: impl AsRef<Path>) -> Result<GgufFile, TurboQuantError> {
-        let data = std::fs::read(path)?;
-        Self::parse(data)
+        Self::parse_file_with_limits(path, GgufLimits::default())
+    }
+
+    /// Read a regular GGUF file under an explicit byte budget, including file growth.
+    /// This does not provide path confinement or an I/O wall-clock deadline.
+    pub fn parse_file_with_limits(
+        path: impl AsRef<Path>,
+        limits: GgufLimits,
+    ) -> Result<GgufFile, TurboQuantError> {
+        let path = path.as_ref();
+        // Reject obvious non-regular inputs before open, then check the actual
+        // descriptor as well. This is not a no-follow security boundary.
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(err("GGUF input is not a regular file"));
+        }
+        let mut file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.len() > limits.max_file_bytes {
+            return Err(err("GGUF file exceeds admission limits"));
+        }
+        let mut data = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            // Read only the remaining budget plus one byte to detect growth.
+            let remaining = limits.max_file_bytes.saturating_sub(data.len() as u64);
+            let read_limit = remaining.saturating_add(1).min(chunk.len() as u64) as usize;
+            let count = file.read(&mut chunk[..read_limit])?;
+            if count == 0 {
+                break;
+            }
+            if count as u64 > remaining {
+                return Err(err("GGUF file exceeds file byte limit during read"));
+            }
+            data.try_reserve(count)
+                .map_err(|_| err("GGUF raw input allocation failed"))?;
+            data.extend_from_slice(&chunk[..count]);
+        }
+        Self::parse_with_limits(data, limits)
     }
 }
 
 struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
+    limits: GgufLimits,
+    remaining_allocation: usize,
 }
 
 impl Reader<'_> {
+    fn reserve_vec<T>(&mut self, count: usize) -> Result<Vec<T>, TurboQuantError> {
+        let bytes = count
+            .checked_mul(std::mem::size_of::<T>())
+            .ok_or_else(|| err("decoded allocation size overflow"))?;
+        self.remaining_allocation = self
+            .remaining_allocation
+            .checked_sub(bytes)
+            .ok_or_else(|| err("GGUF decoded allocation budget exceeded"))?;
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(count)
+            .map_err(|_| err("GGUF decoded allocation failed"))?;
+        Ok(values)
+    }
+
     fn take(&mut self, n: usize) -> Result<&[u8], TurboQuantError> {
         let end = self
             .pos
@@ -292,8 +427,13 @@ impl Reader<'_> {
     fn string(&mut self) -> Result<String, TurboQuantError> {
         let len = self.u64()?;
         let len = usize::try_from(len).map_err(|_| err("string length overflow"))?;
+        if len > self.limits.max_string_bytes || len > self.buf.len() - self.pos {
+            return Err(err("GGUF string exceeds string limit or remaining input"));
+        }
+        let mut owned = self.reserve_vec(len)?;
         let bytes = self.take(len)?;
-        String::from_utf8(bytes.to_vec()).map_err(|_| err("string is not valid UTF-8"))
+        owned.extend_from_slice(bytes);
+        String::from_utf8(owned).map_err(|_| err("string is not valid UTF-8"))
     }
 
     #[allow(clippy::cast_possible_wrap)]
@@ -316,12 +456,22 @@ impl Reader<'_> {
                     return Err(err("metadata array nesting too deep"));
                 }
                 let elem_ty = GgufValueType::from_u32(self.u32()?)?;
-                let count = self.u64()?;
-                let count = usize::try_from(count).map_err(|_| err("array count overflow"))?;
-                if count > self.buf.len() - self.pos {
+                let raw_count = self.u64()?;
+                let count = bounded_count(raw_count, self.limits.max_array_elements, "array")?;
+                let minimum_width = match elem_ty {
+                    GgufValueType::U8 | GgufValueType::I8 | GgufValueType::Bool => 1,
+                    GgufValueType::U16 | GgufValueType::I16 => 2,
+                    GgufValueType::U32 | GgufValueType::I32 | GgufValueType::F32 => 4,
+                    GgufValueType::Array => 12,
+                    _ => 8,
+                };
+                let minimum_bytes = count
+                    .checked_mul(minimum_width)
+                    .ok_or_else(|| err("array byte count overflow"))?;
+                if minimum_bytes > self.buf.len() - self.pos {
                     return Err(err(format!("array count {count} exceeds remaining file")));
                 }
-                let mut values = Vec::with_capacity(count);
+                let mut values = self.reserve_vec(count)?;
                 for _ in 0..count {
                     values.push(self.value(elem_ty, depth + 1)?);
                 }

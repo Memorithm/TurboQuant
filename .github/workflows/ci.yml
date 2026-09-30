@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -13,76 +16,106 @@ env:
 jobs:
   fmt:
     name: Format
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
           components: rustfmt
       - run: cargo fmt --all --manifest-path rust/Cargo.toml -- --check
 
   clippy:
     name: Clippy
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
           components: clippy
       # --all-features would enable turboquant-cuda's `cuda` feature, whose cudarc
       # build script requires a CUDA toolkit — absent on GitHub runners.
-      - run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings -W clippy::pedantic
+      - run: cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings -W clippy::pedantic
       # V1 production gate: make unwrap/expect enforcement explicit instead of
       # relying on workspace-lint inheritance. Tests/examples/benches are excluded
       # so assertion-oriented test code does not weaken the public runtime gate.
       - name: Public production unwrap/expect gate
-        run: cargo clippy --manifest-path rust/Cargo.toml --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::expect_used
+        run: cargo clippy --locked --manifest-path rust/Cargo.toml --workspace --lib --bins -- -D warnings -D clippy::unwrap_used -D clippy::expect_used
 
   check:
     name: Check
     strategy:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
       # Note: the CPU backend is the turboquant-cpu crate (built as part
       # of the workspace); there is no `cpu` cargo feature.
-      - run: cargo check --manifest-path rust/Cargo.toml --workspace
+      - run: cargo check --locked --manifest-path rust/Cargo.toml --workspace
 
   test:
     name: Test
     strategy:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --manifest-path rust/Cargo.toml --workspace
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+      - run: cargo test --locked --manifest-path rust/Cargo.toml --workspace
 
   doc:
     name: Docs
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo doc --manifest-path rust/Cargo.toml --workspace --no-deps
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
+      - run: cargo doc --locked --manifest-path rust/Cargo.toml --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
 
   msrv:
     name: MSRV (1.83)
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.83
-      - run: cargo check --manifest-path rust/Cargo.toml --workspace --no-default-features
-        continue-on-error: true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@988ddcf7fb58c4c20118ea7bfd95f95d88c019f3
+        with:
+          toolchain: 1.83.0
+      # The checked-in graph keeps tempfile's getrandom dependency compatible
+      # with Cargo 1.83. A failed command must fail this gate, not turn green.
+      - run: cargo check --locked --manifest-path rust/Cargo.toml --workspace --no-default-features
 
   audit:
     name: Security Audit
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     # rustsec/audit-check creates a check run with the results; without
     # checks:write the job fails on push even when the audit itself is clean.
@@ -90,8 +123,10 @@ jobs:
       contents: read
       checks: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           # The Cargo workspace (and its Cargo.lock) lives under rust/.
@@ -99,15 +134,20 @@ jobs:
 
   book:
     name: mdBook
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: peaceiris/actions-mdbook@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # v2
         with:
           mdbook-version: '0.4.44'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.98.1
       # The book's Rust examples are compiled against the real crate:
       # build it once and point mdbook test at the rlibs.
-      - run: cargo build -p turboquant-core --manifest-path rust/Cargo.toml
+      - run: cargo build --locked -p turboquant-core --manifest-path rust/Cargo.toml
       - run: mdbook build rust/book
       - run: mdbook test rust/book -L rust/target/debug/deps
