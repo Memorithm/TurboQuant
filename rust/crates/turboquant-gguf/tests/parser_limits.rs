@@ -61,7 +61,12 @@ fn metadata_count_policy_is_enforced_on_valid_input() {
 fn tensor_count_policy_is_enforced_on_valid_input() {
     let mut writer = GgufWriter::new();
     writer
-        .add_tensor("tensor", vec![1], GgmlType::F32, 1f32.to_le_bytes().to_vec())
+        .add_tensor(
+            "tensor",
+            vec![1],
+            GgmlType::F32,
+            1f32.to_le_bytes().to_vec(),
+        )
         .unwrap();
     assert!(GgufParser::parse_with_limits(
         writer.to_bytes().unwrap(),

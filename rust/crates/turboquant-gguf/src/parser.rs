@@ -288,8 +288,7 @@ impl GgufParser {
             None => DEFAULT_ALIGNMENT,
         };
 
-        let alignment_usize =
-            usize::try_from(alignment).map_err(|_| err("alignment overflow"))?;
+        let alignment_usize = usize::try_from(alignment).map_err(|_| err("alignment overflow"))?;
         let data_start = r
             .pos
             .checked_add(alignment_usize - 1)
