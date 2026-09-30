@@ -19,7 +19,9 @@ The raw buffer is separate from the decoded budget, and allocator overhead is
 not counted. Applications handling hostile paths still need their own bounded
 and confined file-opening policy.
 
-`tests/parser_limits.rs` contains tiny malformed-input cases and exact-budget
-boundaries. Existing round-trip tests remain the compatibility oracle. These
+`tests/parser_limits.rs` contains 13 fixed malformed-input/budget regressions
+and three bounded property-fuzz checks with 512 cases each (raw bytes, header
+counts and typed metadata payloads). This is not a libFuzzer campaign or an
+exhaustive parser proof. Existing round-trip tests remain the compatibility oracle. These
 fixtures can inform the import-budget consumers identified by audit RT-X-02;
 no downstream consumer is claimed to have adopted this policy yet.

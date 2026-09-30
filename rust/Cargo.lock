@@ -1979,6 +1979,7 @@ dependencies = [
  "byteorder",
  "half",
  "memmap2",
+ "proptest",
  "serde",
  "tempfile",
  "thiserror",

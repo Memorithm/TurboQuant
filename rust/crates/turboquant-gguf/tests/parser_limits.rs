@@ -1,6 +1,41 @@
 //! Bounded malformed-input regressions for audit RT-TQ-01.
 
+use proptest::prelude::*;
 use turboquant_gguf::{GgmlType, GgufLimits, GgufParser, GgufValue, GgufValueType, GgufWriter};
+
+fn fuzz_limits() -> GgufLimits {
+    GgufLimits {
+        max_file_bytes: 8192,
+        max_metadata_entries: 64,
+        max_tensors: 64,
+        max_array_elements: 256,
+        max_string_bytes: 4096,
+        max_decoded_bytes: 64 * 1024,
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
+    #[test]
+    fn arbitrary_small_inputs_return_without_panicking(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        let _ = GgufParser::parse_with_limits(bytes, fuzz_limits());
+    }
+
+    #[test]
+    fn arbitrary_header_counts_return_without_panicking(tensors in any::<u64>(), metadata in any::<u64>()) {
+        let _ = GgufParser::parse_with_limits(header(tensors, metadata), fuzz_limits());
+    }
+
+    #[test]
+    fn arbitrary_metadata_values_return_without_panicking(ty in 0u32..13, body in prop::collection::vec(any::<u8>(), 0..4096)) {
+        let mut bytes = header(0, 1);
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&ty.to_le_bytes());
+        bytes.extend_from_slice(&body);
+        let _ = GgufParser::parse_with_limits(bytes, fuzz_limits());
+    }
+}
 
 fn header(tensors: u64, metadata: u64) -> Vec<u8> {
     let mut bytes = b"GGUF".to_vec();
