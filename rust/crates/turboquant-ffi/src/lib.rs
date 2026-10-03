@@ -344,7 +344,8 @@ pub unsafe extern "C" fn tq_quantize(
 /// - `packed` / `packed_len`: the packed 3-bit data;
 ///   `packed_len` must be >= `tq_packed_size(n)`.
 /// - `n`: the original number of values (> 0).
-/// - `scale`: the block scale returned by `tq_quantize` (finite, > 0).
+/// - `scale`: the block scale returned by `tq_quantize`; it must remain finite
+///   and non-zero after conversion to the core's `f16` scale representation.
 /// - `corr` / `corr_len`: optional correction data; when `corr` is non-NULL,
 ///   `corr_len` must be >= `tq_corr_size(n)`. Correction is applied only if
 ///   the quantizer was created with correction enabled; passing NULL skips
@@ -381,6 +382,10 @@ pub unsafe extern "C" fn tq_dequantize(
     if !scale.is_finite() || scale <= 0.0 {
         return TQ_ERR_INVALID_ARGUMENT;
     }
+    let scale = f16::from_f32(scale);
+    if !scale.is_finite() || scale <= f16::ZERO {
+        return TQ_ERR_INVALID_ARGUMENT;
+    }
     if packed_len < needed_packed {
         return TQ_ERR_BUFFER_TOO_SMALL;
     }
@@ -404,7 +409,7 @@ pub unsafe extern "C" fn tq_dequantize(
 
     let block = CompressedBlock {
         packed: packed_vec,
-        scale: f16::from_f32(scale),
+        scale,
         correction_bits: corr_vec,
     };
 
@@ -840,7 +845,15 @@ mod tests {
                 TQ_ERR_INVALID_ARGUMENT
             );
             // Bad scales.
-            for bad in [0.0f32, -1.0, f32::NAN, f32::INFINITY] {
+            for bad in [
+                0.0f32,
+                -1.0,
+                f32::NAN,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                70_000.0,
+                1.0e-20,
+            ] {
                 assert_eq!(
                     tq_dequantize(
                         q,
@@ -855,6 +868,24 @@ mod tests {
                     ),
                     TQ_ERR_INVALID_ARGUMENT,
                     "scale {bad}"
+                );
+            }
+            // Values at both non-zero finite binary16 boundaries remain valid.
+            for boundary in [f16::from_bits(1).to_f32(), f16::MAX.to_f32()] {
+                assert_eq!(
+                    tq_dequantize(
+                        q,
+                        packed.as_ptr(),
+                        packed.len(),
+                        n,
+                        boundary,
+                        corr.as_ptr(),
+                        corr.len(),
+                        out.as_mut_ptr(),
+                        out.len(),
+                    ),
+                    TQ_OK,
+                    "scale {boundary}"
                 );
             }
             // Short packed buffer.

@@ -144,7 +144,8 @@ int tq_quantize(const struct tq_quantizer *quantizer,
 // - `packed` / `packed_len`: the packed 3-bit data;
 //   `packed_len` must be >= `tq_packed_size(n)`.
 // - `n`: the original number of values (> 0).
-// - `scale`: the block scale returned by `tq_quantize` (finite, > 0).
+// - `scale`: the block scale returned by `tq_quantize`; it must remain finite
+//   and non-zero after conversion to the core's binary16 scale representation.
 // - `corr` / `corr_len`: optional correction data; when `corr` is non-NULL,
 //   `corr_len` must be >= `tq_corr_size(n)`. Correction is applied only if
 //   the quantizer was created with correction enabled; passing NULL skips
