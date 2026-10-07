@@ -56,7 +56,7 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          awk '/^## \\[/{if (p) exit; p=1} p' CHANGELOG.md > release_notes.md
+          awk '/^## \[/{if (p) exit; p=1} p' CHANGELOG.md > release_notes.md
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           cat release_notes.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
