@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -123,7 +125,6 @@ impl DestinationLock {
             .create(true)
             .truncate(false)
             .open(&path)?;
-        use std::os::fd::AsRawFd;
         // SAFETY: `file` owns a valid descriptor for the lifetime of this
         // guard. `flock` neither takes ownership nor retains the pointer.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
@@ -310,7 +311,9 @@ pub fn compress_once_with_limit(
         if output.is_file() && manifest_matches(&manifest_path, &identity, block_size) {
             return Ok(CompressOutcome::UpToDate(output));
         }
-        return Err("destination exists without matching provenance; refusing to replace it".into());
+        return Err(
+            "destination exists without matching provenance; refusing to replace it".into(),
+        );
     }
 
     std::fs::create_dir_all(output_dir)?;
@@ -319,7 +322,9 @@ pub fn compress_once_with_limit(
         if output.is_file() && manifest_matches(&manifest_path, &identity, block_size) {
             return Ok(CompressOutcome::UpToDate(output));
         }
-        return Err("destination appeared without matching provenance; refusing to replace it".into());
+        return Err(
+            "destination appeared without matching provenance; refusing to replace it".into(),
+        );
     }
     let opts = TurboOptions {
         block_size,
