@@ -20,6 +20,14 @@ pub struct DaemonConfig {
     pub interval_secs: u64,
     /// Quantization block size (power of two >= 8).
     pub block_size: usize,
+    /// Maximum number of filesystem events buffered before backpressure drops duplicates.
+    pub event_queue_capacity: usize,
+    /// Maximum number of compression jobs that may run concurrently.
+    pub max_concurrent_jobs: usize,
+    /// Maximum admitted GGUF input size in bytes.
+    pub max_file_bytes: u64,
+    /// Maximum number of recent paths retained by the debounce cache.
+    pub debounce_cache_capacity: usize,
 }
 
 impl Default for DaemonConfig {
@@ -30,6 +38,10 @@ impl Default for DaemonConfig {
             listen_addr: "127.0.0.1:7460".to_string(),
             interval_secs: 30,
             block_size: 64,
+            event_queue_capacity: 256,
+            max_concurrent_jobs: 2,
+            max_file_bytes: 64 * 1024 * 1024 * 1024,
+            debounce_cache_capacity: 4096,
         }
     }
 }
@@ -63,6 +75,18 @@ impl DaemonConfig {
         }
         if self.watch_dirs.is_empty() {
             return Err("watch_dirs must not be empty".into());
+        }
+        if self.event_queue_capacity == 0 {
+            return Err("event_queue_capacity must be greater than zero".into());
+        }
+        if self.max_concurrent_jobs == 0 {
+            return Err("max_concurrent_jobs must be greater than zero".into());
+        }
+        if self.max_file_bytes == 0 {
+            return Err("max_file_bytes must be greater than zero".into());
+        }
+        if self.debounce_cache_capacity == 0 {
+            return Err("debounce_cache_capacity must be greater than zero".into());
         }
         Ok(())
     }
@@ -110,7 +134,11 @@ mod tests {
             "output_dir": "/out",
             "listen_addr": "0.0.0.0:8080",
             "interval_secs": 5,
-            "block_size": 128
+            "block_size": 128,
+            "event_queue_capacity": 32,
+            "max_concurrent_jobs": 3,
+            "max_file_bytes": 1048576,
+            "debounce_cache_capacity": 128
         }"#;
         let config: DaemonConfig = serde_json::from_str(json).unwrap();
         config.validate().unwrap();
@@ -119,6 +147,10 @@ mod tests {
         assert_eq!(config.listen_addr, "0.0.0.0:8080");
         assert_eq!(config.interval_secs, 5);
         assert_eq!(config.block_size, 128);
+        assert_eq!(config.event_queue_capacity, 32);
+        assert_eq!(config.max_concurrent_jobs, 3);
+        assert_eq!(config.max_file_bytes, 1_048_576);
+        assert_eq!(config.debounce_cache_capacity, 128);
     }
 
     #[test]
@@ -141,6 +173,30 @@ mod tests {
             ..Default::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_resource_limits() {
+        for config in [
+            DaemonConfig {
+                event_queue_capacity: 0,
+                ..Default::default()
+            },
+            DaemonConfig {
+                max_concurrent_jobs: 0,
+                ..Default::default()
+            },
+            DaemonConfig {
+                max_file_bytes: 0,
+                ..Default::default()
+            },
+            DaemonConfig {
+                debounce_cache_capacity: 0,
+                ..Default::default()
+            },
+        ] {
+            assert!(config.validate().is_err());
+        }
     }
 
     #[test]
