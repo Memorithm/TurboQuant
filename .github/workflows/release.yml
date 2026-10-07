@@ -46,7 +46,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: turboquant-${{ matrix.target }}
-          path: rust/turboquant-${ARCHIVE_VERSION}-${{ matrix.target }}.${{ matrix.archive }}
+          path: rust/turboquant-${{ env.ARCHIVE_VERSION }}-${{ matrix.target }}.${{ matrix.archive }}
           if-no-files-found: error
 
   release:
