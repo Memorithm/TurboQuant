@@ -1898,6 +1898,7 @@ name = "turboquant-daemon"
 version = "1.0.0-rc1"
 dependencies = [
  "axum",
+ "libc",
  "notify",
  "sd-notify",
  "serde",

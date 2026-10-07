@@ -109,28 +109,69 @@ struct ProvenanceManifest {
 }
 
 struct DestinationLock {
+    file: Option<File>,
+    #[cfg(not(unix))]
     path: PathBuf,
 }
 
 impl DestinationLock {
+    #[cfg(unix)]
     fn acquire(output: &Path) -> Result<Self, BoxError> {
         let path = sibling_with_suffix(output, ".lock")?;
-        OpenOptions::new()
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
+        use std::os::fd::AsRawFd;
+        // SAFETY: `file` owns a valid descriptor for the lifetime of this
+        // guard. `flock` neither takes ownership nor retains the pointer.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(Self { file: Some(file) })
+    }
+
+    #[cfg(not(unix))]
+    fn acquire(output: &Path) -> Result<Self, BoxError> {
+        let path = sibling_with_suffix(output, ".lock")?;
+        let file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)?;
-        Ok(Self { path })
+        Ok(Self {
+            file: Some(file),
+            path,
+        })
     }
 }
 
 impl Drop for DestinationLock {
     fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_file(&self.path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                warn!(
-                    "failed to remove destination lock {}: {error}",
-                    self.path.display()
-                );
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            if let Some(file) = self.file.as_ref() {
+                // SAFETY: the descriptor remains valid until this guard is dropped.
+                let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+                if result != 0 {
+                    warn!(
+                        "failed to release destination lock: {}",
+                        std::io::Error::last_os_error()
+                    );
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            drop(self.file.take());
+            if let Err(error) = std::fs::remove_file(&self.path) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    warn!(
+                        "failed to remove destination lock {}: {error}",
+                        self.path.display()
+                    );
+                }
             }
         }
     }
@@ -262,17 +303,23 @@ pub fn compress_once_with_limit(
     let stem = canonical
         .file_stem()
         .map_or_else(|| "model".to_string(), |s| s.to_string_lossy().into_owned());
-    let output = output_dir.join(format!("{stem}-{identity}-turbo3.gguf"));
+    let output = output_dir.join(format!("{stem}-{identity}-b{block_size}-turbo3.gguf"));
     let manifest_path = sibling_with_suffix(&output, ".provenance.json")?;
 
-    if output.is_file() && manifest_matches(&manifest_path, &identity, block_size) {
-        return Ok(CompressOutcome::UpToDate(output));
+    if output.exists() || manifest_path.exists() {
+        if output.is_file() && manifest_matches(&manifest_path, &identity, block_size) {
+            return Ok(CompressOutcome::UpToDate(output));
+        }
+        return Err("destination exists without matching provenance; refusing to replace it".into());
     }
 
     std::fs::create_dir_all(output_dir)?;
     let _lock = DestinationLock::acquire(&output)?;
-    if output.is_file() && manifest_matches(&manifest_path, &identity, block_size) {
-        return Ok(CompressOutcome::UpToDate(output));
+    if output.exists() || manifest_path.exists() {
+        if output.is_file() && manifest_matches(&manifest_path, &identity, block_size) {
+            return Ok(CompressOutcome::UpToDate(output));
+        }
+        return Err("destination appeared without matching provenance; refusing to replace it".into());
     }
     let opts = TurboOptions {
         block_size,
@@ -799,6 +846,37 @@ mod tests {
                 output.file_name().unwrap().to_string_lossy()
             );
         }
+    }
+
+    #[test]
+    fn destination_lock_can_be_reacquired_after_guard_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("model-turbo3.gguf");
+        drop(DestinationLock::acquire(&output).unwrap());
+        drop(DestinationLock::acquire(&output).unwrap());
+    }
+
+    #[test]
+    fn failed_new_policy_publication_preserves_previous_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("model.gguf");
+        let output_dir = dir.path().join("out");
+        write_test_model(&input);
+        let CompressOutcome::Compressed(previous_output) =
+            compress_once(&input, &output_dir, 64).unwrap()
+        else {
+            panic!("initial source was not compressed");
+        };
+        let previous_bytes = std::fs::read(&previous_output).unwrap();
+
+        let (_, identity, _) = source_identity(&input, u64::MAX).unwrap();
+        let next_output = output_dir.join(format!("model-{identity}-b128-turbo3.gguf"));
+        let blocked_sidecar = sibling_with_suffix(&next_output, ".provenance.json").unwrap();
+        std::fs::create_dir(&blocked_sidecar).unwrap();
+
+        assert!(compress_once(&input, &output_dir, 128).is_err());
+        assert_eq!(std::fs::read(&previous_output).unwrap(), previous_bytes);
+        assert!(!next_output.exists());
     }
 
     #[test]

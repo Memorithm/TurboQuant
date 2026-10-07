@@ -34,11 +34,13 @@ an unbounded backlog. Both counters are exposed by `/healthz`. Active
 compression jobs are tracked and drained during shutdown.
 
 Compressed files are named
-`<stem>-<source-identity>-turbo3.gguf`. The identity covers the canonical
-source path and source bytes, so equal stems in different directories cannot
-overwrite each other. Each output has a `.provenance.json` sidecar. Output and
-sidecar are staged in exclusive temporary files and published under a
-per-destination lock.
+`<stem>-<source-identity>-b<block-size>-turbo3.gguf`. The identity covers the
+canonical source path and source bytes, so equal stems in different directories
+cannot overwrite each other and a policy change cannot replace an older valid
+artifact. Each output has a `.provenance.json` sidecar. Output and sidecar are
+staged in exclusive temporary files and published under a per-destination OS
+lock on Unix. Existing destinations without matching provenance are preserved
+and rejected rather than overwritten.
 
 ## HTTP API
 
