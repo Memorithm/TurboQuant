@@ -25,8 +25,10 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 notify.workspace = true
-sd-notify.workspace = true
 libc.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+sd-notify.workspace = true
 
 
 [dev-dependencies]

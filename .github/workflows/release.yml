@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
 
 jobs:
   build:
@@ -13,37 +16,43 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
+            archive: tar.gz
           - target: x86_64-apple-darwin
             os: macos-14
+            archive: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-2022
+            archive: zip
     runs-on: ${{ matrix.os }}
+    env:
+      ARCHIVE_VERSION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - name: Build release
-        run: cargo build --manifest-path rust/Cargo.toml --release --workspace --target ${{ matrix.target }}
+        run: cargo build --locked --manifest-path rust/Cargo.toml --release --package turboquant-cli --package turboquant-daemon --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
           cd rust/target/${{ matrix.target }}/release
           if [ "${{ matrix.os }}" = "windows-2022" ]; then
-            7z a ../../../turboquant-${{ github.ref_name }}-${{ matrix.target }}.zip turboquant.exe turboquant-daemon.exe
+            7z a ../../../turboquant-${ARCHIVE_VERSION}-${{ matrix.target }}.zip turboquant.exe turboquant-daemon.exe
           else
-            tar czf ../../../turboquant-${{ github.ref_name }}-${{ matrix.target }}.tar.gz turboquant turboquant-daemon
+            tar czf ../../../turboquant-${ARCHIVE_VERSION}-${{ matrix.target }}.tar.gz turboquant turboquant-daemon
           fi
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: turboquant-${{ matrix.target }}
-          path: rust/turboquant-*.tar.gz
-          if-no-files-found: ignore
+          path: rust/turboquant-${{ env.ARCHIVE_VERSION }}-${{ matrix.target }}.${{ matrix.archive }}
+          if-no-files-found: error
 
   release:
     name: Create Release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
