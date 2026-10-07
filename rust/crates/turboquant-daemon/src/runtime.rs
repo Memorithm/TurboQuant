@@ -115,7 +115,10 @@ struct DestinationLock {
 impl DestinationLock {
     fn acquire(output: &Path) -> Result<Self, BoxError> {
         let path = sibling_with_suffix(output, ".lock")?;
-        OpenOptions::new().write(true).create_new(true).open(&path)?;
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
         Ok(Self { path })
     }
 }
@@ -124,7 +127,10 @@ impl Drop for DestinationLock {
     fn drop(&mut self) {
         if let Err(error) = std::fs::remove_file(&self.path) {
             if error.kind() != std::io::ErrorKind::NotFound {
-                warn!("failed to remove destination lock {}: {error}", self.path.display());
+                warn!(
+                    "failed to remove destination lock {}: {error}",
+                    self.path.display()
+                );
             }
         }
     }
@@ -165,10 +171,11 @@ fn source_identity(input: &Path, max_file_bytes: u64) -> Result<(PathBuf, String
     let mut digest = fnv1a_update(FNV1A_128_OFFSET, canonical_text.as_bytes());
     digest = fnv1a_update(digest, IDENTITY_SEPARATOR);
     let mut total = 0u64;
-    let mut chunk = [0u8; 64 * 1024];
+    let mut chunk = vec![0u8; 64 * 1024];
     loop {
         let remaining = max_file_bytes.saturating_sub(total);
-        let read_limit = remaining.saturating_add(1).min(chunk.len() as u64) as usize;
+        let read_limit = usize::try_from(remaining.saturating_add(1).min(chunk.len() as u64))
+            .map_err(|_| "GGUF read budget does not fit usize")?;
         let count = file.read(&mut chunk[..read_limit])?;
         if count == 0 {
             break;
@@ -783,8 +790,14 @@ mod tests {
             let manifest_path = sibling_with_suffix(output, ".provenance.json").unwrap();
             let manifest: ProvenanceManifest =
                 serde_json::from_slice(&std::fs::read(manifest_path).unwrap()).unwrap();
-            assert_eq!(manifest.source_path, source.canonicalize().unwrap().to_string_lossy());
-            assert_eq!(manifest.output_file, output.file_name().unwrap().to_string_lossy());
+            assert_eq!(
+                manifest.source_path,
+                source.canonicalize().unwrap().to_string_lossy()
+            );
+            assert_eq!(
+                manifest.output_file,
+                output.file_name().unwrap().to_string_lossy()
+            );
         }
     }
 
