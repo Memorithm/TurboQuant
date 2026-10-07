@@ -32,7 +32,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Build release
-        run: cargo build --manifest-path rust/Cargo.toml --release --workspace --target ${{ matrix.target }}
+        run: cargo build --locked --manifest-path rust/Cargo.toml --release --package turboquant-cli --package turboquant-daemon --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
