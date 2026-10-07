@@ -522,12 +522,14 @@ pub async fn run(config: DaemonConfig) -> Result<(), BoxError> {
     // Tell systemd we are ready (no-op outside systemd). Keep
     // NOTIFY_SOCKET set (unset_env = false): the watchdog task below
     // sends keepalives over the same socket.
+    #[cfg(unix)]
     if let Err(e) = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]) {
         debug!("sd_notify failed (not running under systemd?): {e}");
     }
 
     // systemd watchdog keepalives. Only spawned when systemd armed a
     // watchdog for this process; normal runs pay zero overhead.
+    #[cfg(unix)]
     let watchdog = watchdog_interval_from_env().map(|interval| {
         debug!("systemd watchdog enabled, pinging every {interval:?}");
         tokio::spawn(async move {
@@ -540,6 +542,8 @@ pub async fn run(config: DaemonConfig) -> Result<(), BoxError> {
             }
         })
     });
+    #[cfg(not(unix))]
+    let watchdog: Option<tokio::task::JoinHandle<()>> = None;
 
     // HTTP server with graceful shutdown.
     let (http_shutdown_tx, http_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
